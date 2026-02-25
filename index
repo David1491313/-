@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>奇門遁甲排盤（單檔版 v2）</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    .fade-in { animation: fadeIn 0.4s ease-out; }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(5px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body class="bg-gray-50">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const GANS = ['甲','乙','丙','丁','戊','己','庚','辛','壬','癸'];
+    const ZHIS = ['子','丑','寅','卯','辰','巳','午','未','申','酉','戌','亥'];
+    const PALACES = [null, '坎₁', '坤₂', '震₃', '巽₄', '中₅', '乾₆', '兌₇', '艮₈', '離₉'];
+    const STARS = [null, '天蓬', '天芮', '天沖', '天輔', '天禽', '天心', '天柱', '天任', '天英'];
+    const DOORS = [null, '休門', '死門', '傷門', '杜門', '中門', '開門', '驚門', '生門', '景門'];
+    const DEITIES = ['值符', '騰蛇', '太陰', '六合', '白虎', '玄武', '九地', '九天'];
+    const RING = [1, 8, 3, 4, 9, 2, 7, 6];
+    const OPPOSITE_PALACE = { 1:9, 2:8, 3:7, 4:6, 6:4, 7:3, 8:2, 9:1 };
+    const QI_GANS = [4, 5, 6, 7, 8, 9, 3, 2, 1];
+
+    const getRingIndex = (p) => RING.indexOf(p);
+    const advanceRing = (p, steps) => RING[(getRingIndex(p) + steps + 64) % 8];
+
+    const checkXing = (stem, palace) => {
+      const xingMap = { '戊': 3, '己': 2, '庚': 8, '辛': 9, '壬': 4, '癸': 4 };
+      return xingMap[stem] === palace;
+    };
+
+    const checkMu = (stem, palace) => {
+      const muMap = { '甲': 2, '乙': 6, '丙': 6, '丁': 8, '戊': 6, '己': 8, '庚': 8, '辛': 4, '壬': 4, '癸': 2 };
+      return muMap[stem] === palace;
+    };
+
+    const checkPo = (door, palace) => {
+      const DOOR_PO = { '休門': [9], '生門': [1], '傷門': [2, 8], '杜門': [2, 8], '景門': [6, 7], '死門': [1], '驚門': [3, 4], '開門': [3, 4] };
+      return DOOR_PO[door]?.includes(palace);
+    };
+
+    const SOLAR_TERMS = [
+      { d: 5, y: true, j: [2,8,5] }, { d: 20, y: true, j: [3,9,6] },
+      { d: 4, y: true, j: [8,5,2] }, { d: 19, y: true, j: [9,6,3] },
+      { d: 5, y: true, j: [1,7,4] }, { d: 20, y: true, j: [3,9,6] },
+      { d: 4, y: true, j: [4,1,7] }, { d: 20, y: true, j: [5,2,8] },
+      { d: 5, y: true, j: [4,1,7] }, { d: 21, y: true, j: [5,2,8] },
+      { d: 5, y: true, j: [6,3,9] }, { d: 21, y: false, j: [9,3,6] },
+      { d: 7, y: false, j: [8,2,5] }, { d: 22, y: false, j: [7,1,4] },
+      { d: 7, y: false, j: [2,5,8] }, { d: 23, y: false, j: [1,4,7] },
+      { d: 7, y: false, j: [9,3,6] }, { d: 23, y: false, j: [7,1,4] },
+      { d: 8, y: false, j: [6,9,3] }, { d: 23, y: false, j: [5,8,2] },
+      { d: 7, y: false, j: [6,9,3] }, { d: 22, y: false, j: [5,8,2] },
+      { d: 7, y: false, j: [4,7,1] }, { d: 21, y: true, j: [1,7,4] }
+    ];
+
+    const getSolarTerm = (m, d) => {
+      let idx = (m - 1) * 2;
+      if (d >= SOLAR_TERMS[idx + 1].d) return SOLAR_TERMS[idx + 1];
+      if (d >= SOLAR_TERMS[idx].d) return SOLAR_TERMS[idx];
+      return SOLAR_TERMS[(idx - 1 + 24) % 24];
+    };
+
+    const computeQiMen = (yStr, mStr, dStr, hStr, juSetting, system) => {
+      const y = parseInt(yStr), m = parseInt(mStr), d = parseInt(dStr), h = parseInt(hStr);
+      const targetDate = new Date(`${y}-${mStr.padStart(2, '0')}-${dStr.padStart(2, '0')}T${hStr.padStart(2, '0')}:00:00+08:00`);
+
+      let astroDate = new Date(targetDate.getTime());
+      let isNextDay = h >= 23;
+      if (isNextDay) astroDate.setDate(astroDate.getDate() + 1);
+      const astroHStr = isNextDay ? '00' : hStr.padStart(2, '0');
+
+      let lunarM = 1, lunarD = 1, lunarYearStr = '';
+      try {
+        const parts = new Intl.DateTimeFormat('en-US-u-ca-chinese', { month: 'numeric', day: 'numeric', timeZone: 'Asia/Taipei' }).formatToParts(astroDate);
+        parts.forEach(p => {
+          if (p.type === 'month') {
+            const mMatch = p.value.match(/\d+/);
+            if (mMatch) lunarM = parseInt(mMatch[0], 10);
+          }
+          if (p.type === 'day') {
+            const dMatch = p.value.match(/\d+/);
+            if (dMatch) lunarD = parseInt(dMatch[0], 10);
+          }
+        });
+        const yearParts = new Intl.DateTimeFormat('zh-TW-u-ca-chinese', { year: 'numeric', timeZone: 'Asia/Taipei' }).formatToParts(astroDate);
+        lunarYearStr = yearParts.find(p => p.type === 'yearName')?.value || '';
+      } catch (e) {}
+
+      let daysSince1970 = Math.floor((astroDate.getTime() + 28800000) / 86400000);
+      let dayIndex = (daysSince1970 + 17) % 60;
+      if (dayIndex < 0) dayIndex += 60;
+
+      const dGanIndex = dayIndex % 10;
+      const dZhiIndex = dayIndex % 12;
+      const hZhiIndex = Math.floor((h + 1) / 2) % 12;
+      const hGanIndex = (dGanIndex % 5 * 2 + hZhiIndex) % 10;
+
+      let baziYear = astroDate.getFullYear();
+      let baziMonthZhi = astroDate.getMonth() + 1;
+      const solD = SOLAR_TERMS[(astroDate.getMonth()) * 2].d;
+      if (astroDate.getDate() < solD) baziMonthZhi -= 1;
+      if (baziMonthZhi < 2) baziYear -= 1;
+      baziMonthZhi = (baziMonthZhi + 12) % 12;
+
+      const yGanIndex = (baziYear - 4 + 1000) % 10;
+      const yZhiIndex = (baziYear - 4 + 1200) % 12;
+
+      const monthOffset = (baziMonthZhi - 2 + 12) % 12;
+      const monthStemStart = ((yGanIndex % 5) * 2 + 2) % 10;
+      const mGanIndex = (monthStemStart + monthOffset) % 10;
+
+      const bazi = {
+        y: GANS[yGanIndex] + ZHIS[yZhiIndex],
+        m: GANS[mGanIndex] + ZHIS[baziMonthZhi],
+        d: GANS[dGanIndex] + ZHIS[dZhiIndex],
+        h: GANS[hGanIndex] + ZHIS[hZhiIndex],
+      };
+
+      const isWuBuYuShi = (hGanIndex - dGanIndex + 10) % 10 === 6;
+
+      let tGanIndex, tZhiIndex;
+      if (system === '6') { tGanIndex = dGanIndex; tZhiIndex = dZhiIndex; }
+      else if (system === '4') { tGanIndex = mGanIndex; tZhiIndex = baziMonthZhi; }
+      else if (system === '5') { tGanIndex = yGanIndex; tZhiIndex = yZhiIndex; }
+      else { tGanIndex = hGanIndex; tZhiIndex = hZhiIndex; }
+
+      const term = getSolarTerm(astroDate.getMonth() + 1, astroDate.getDate());
+      let isYin = !term.y;
+      let juNum = 1;
+
+      if (juSetting !== 'auto') {
+        isYin = juSetting.startsWith('yin');
+        juNum = parseInt(juSetting.replace('yin', '').replace('yang', ''));
+      } else {
+        if (system === '1') {
+          juNum = ((yZhiIndex + 1) + lunarM + lunarD + (hZhiIndex + 1)) % 9 || 9;
+        } else if (system === '5') {
+          isYin = true;
+          const yuanYear = Math.floor(((baziYear - 1864 + 18000) % 180) / 60);
+          juNum = yuanYear === 0 ? 1 : (yuanYear === 1 ? 4 : 7);
+        } else if (system === '4') {
+          isYin = true;
+          const modZhi = yZhiIndex % 3;
+          if (modZhi === 0) juNum = 8;
+          else if (modZhi === 2) juNum = 2;
+          else juNum = 5;
+        } else {
+          const yuan = Math.floor((dayIndex % 15) / 5);
+          juNum = term.j[yuan];
+        }
+      }
+
+      const earthPan = Array(10).fill(null);
+      for (let i = 0; i < 9; i++) {
+        let p = isYin ? (juNum - i - 1 + 9) % 9 + 1 : (juNum + i - 1) % 9 + 1;
+        earthPan[p] = QI_GANS[i];
+      }
+
+      const xunIndex = (tZhiIndex - tGanIndex + 12) % 12;
+      const xunShouMap = { 0: 4, 10: 5, 8: 6, 6: 7, 4: 8, 2: 9 };
+      const xunStem = xunShouMap[xunIndex];
+      const xunText = '甲' + ZHIS[xunIndex];
+
+      let fuPalace = earthPan.indexOf(xunStem);
+      if (fuPalace === 5) fuPalace = 2;
+
+      const heavenPan = Array(10).fill(null);
+      let targetFuPalace = earthPan.indexOf(tGanIndex === 0 ? xunStem : tGanIndex);
+      if (targetFuPalace === 5) targetFuPalace = 2;
+
+      const starOffset = getRingIndex(targetFuPalace) - getRingIndex(fuPalace);
+      for (let p of RING) {
+        const targetP = advanceRing(p, starOffset);
+        heavenPan[targetP] = { star: p, stem: earthPan[p], original: p };
+      }
+
+      const doorPan = Array(10).fill(null);
+      let steps = tGanIndex;
+      if (tGanIndex === 0) steps = 0;
+
+      let currentStepPalace = fuPalace;
+      for(let i = 0; i < steps; i++) {
+        currentStepPalace += (isYin ? -1 : 1);
+        if(currentStepPalace > 9) currentStepPalace -= 9;
+        if(currentStepPalace < 1) currentStepPalace += 9;
+      }
+      let targetShiPalace = currentStepPalace;
+      if (targetShiPalace === 5) targetShiPalace = 2;
+
+      const doorOffset = getRingIndex(targetShiPalace) - getRingIndex(fuPalace);
+      for (let p of RING) {
+        const targetP = advanceRing(p, doorOffset);
+        doorPan[targetP] = p;
+      }
+
+      const deityPan = Array(10).fill(null);
+      const deityStartIdx = getRingIndex(targetFuPalace);
+      for (let i = 0; i < 8; i++) {
+        const offset = isYin ? -i : i;
+        const targetP = RING[(deityStartIdx + offset + 8) % 8];
+        deityPan[targetP] = DEITIES[i];
+      }
+
+      const empty1 = (xunIndex - 2 + 12) % 12;
+      const empty2 = (xunIndex - 1 + 12) % 12;
+      const branchToPalace = { 0:1, 1:8, 2:8, 3:3, 4:4, 5:4, 6:9, 7:2, 8:2, 9:7, 10:6, 11:6 };
+      const emptyPalaces = [branchToPalace[empty1], branchToPalace[empty2]];
+      const horseMap = { 0:8, 4:8, 8:8, 3:4, 7:4, 11:4, 2:2, 6:2, 10:2, 1:6, 5:6, 9:6 };
+      const horsePalace = horseMap[tZhiIndex];
+
+      const outerStems = Array(10).fill('');
+      let effHourStem = tGanIndex === 0 ? xunStem : tGanIndex;
+
+      let hpLocation = null;
+      for (let p of RING) {
+        if (heavenPan[p].stem === effHourStem) { hpLocation = p; break; }
+        if (heavenPan[p].star === 2 && earthPan[5] === effHourStem) { hpLocation = p; break; }
+      }
+
+      if (hpLocation !== null) {
+        let outerShift = getRingIndex(targetShiPalace) - getRingIndex(hpLocation);
+        for (let p of RING) {
+          let sourceP = advanceRing(p, -outerShift);
+          let targetHeaven = heavenPan[sourceP];
+          if (targetHeaven && targetHeaven.stem !== null) {
+            let str = GANS[targetHeaven.stem];
+            if (targetHeaven.star === 2 && earthPan[5] !== null) str += GANS[earthPan[5]];
+            outerStems[p] = str.split('').join('');
+          }
+        }
+      }
+
+      return {
+        bazi,
+        lunar: `${lunarYearStr || bazi.y} 年 ${lunarM.toString().padStart(2, '0')} 月 ${lunarD.toString().padStart(2, '0')} 日`,
+        displayHStr: astroHStr,
+        juText: (isYin ? '陰' : '陽') + juNum,
+        xunText,
+        fuText: GANS[xunStem],
+        zhiFu: STARS[fuPalace],
+        zhiShi: DOORS[fuPalace],
+        earthPan,
+        heavenPan,
+        doorPan,
+        deityPan,
+        outerStems,
+        emptyText: ZHIS[empty1] + ZHIS[empty2],
+        horseText: ZHIS[horseMap[tZhiIndex] === 8 ? 2 : horseMap[tZhiIndex] === 4 ? 5 : horseMap[tZhiIndex] === 2 ? 8 : 11],
+        emptyPalaces,
+        horsePalace,
+        doorOffset,
+        starOffset,
+        isWuBuYuShi
+      };
+    };
+
+    const QiMenDunJiaApp = () => {
+      const [year, setYear] = useState('2027');
+      const [month, setMonth] = useState('02');
+      const [day, setDay] = useState('24');
+      const [hour, setHour] = useState('23');
+      const [minute, setMinute] = useState('13');
+
+      const [system, setSystem] = useState('1');
+      const [juSetting, setJuSetting] = useState('auto');
+
+      const [showResult, setShowResult] = useState(false);
+      const [calcData, setCalcData] = useState(null);
+
+      const years = Array.from({ length: 200 }, (_, i) => (1901 + i).toString());
+      const months = Array.from({ length: 12 }, (_, i) => (i + 1).toString().padStart(2, '0'));
+      const getDaysInMonth = (y, m) => new Date(parseInt(y), parseInt(m), 0).getDate();
+      const days = Array.from({ length: getDaysInMonth(year, month) }, (_, i) => (i + 1).toString().padStart(2, '0'));
+      const hours = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
+      const minutes = Array.from({ length: 60 }, (_, i) => i.toString().padStart(2, '0'));
+
+      const juOptions = [
+        { value: 'auto', label: '自動計算' },
+        ...Array.from({ length: 9 }, (_, i) => ({ value: `yang${i + 1}`, label: `陽遁${i + 1}局` })),
+        ...Array.from({ length: 9 }, (_, i) => ({ value: `yin${i + 1}`, label: `陰遁${i + 1}局` }))
+      ];
+
+      const handleSetCurrentTime = () => {
+        const now = new Date();
+        setYear(now.getFullYear().toString());
+        setMonth((now.getMonth() + 1).toString().padStart(2, '0'));
+        setDay(now.getDate().toString().padStart(2, '0'));
+        setHour(now.getHours().toString().padStart(2, '0'));
+        setMinute(now.getMinutes().toString().padStart(2, '0'));
+      };
+
+      const handleStartCalculate = () => {
+        const data = computeQiMen(year, month, day, hour, juSetting, system);
+        setCalcData(data);
+        setShowResult(true);
+      };
+
+      const quickChangeDate = (type, amount) => {
+        let d = new Date(parseInt(year), parseInt(month) - 1, parseInt(day), parseInt(hour));
+        if (type === 'day') d.setDate(d.getDate() + amount);
+        if (type === 'hour') d.setHours(d.getHours() + amount);
+
+        const newY = d.getFullYear().toString();
+        const newM = (d.getMonth() + 1).toString().padStart(2, '0');
+        const newD = d.getDate().toString().padStart(2, '0');
+        const newH = d.getHours().toString().padStart(2, '0');
+
+        setYear(newY);
+        setMonth(newM);
+        setDay(newD);
+        setHour(newH);
+
+        const data = computeQiMen(newY, newM, newD, newH, juSetting, system);
+        setCalcData(data);
+        setShowResult(true);
+      };
+
+      const getCombinedStem = (panArray, p) => {
+        if (!calcData || panArray[p] === null) return { stemStr: '', stemArr: [] };
+        let primary = panArray[p];
+        let arr = [GANS[primary]];
+        let str = GANS[primary];
+        if (p === 2 && panArray[5] !== null) {
+          arr.push(GANS[panArray[5]]);
+          str = GANS[primary] + GANS[panArray[5]];
+        }
+        return { stemStr: str, stemArr: arr };
+      };
+
+      const systemNameMap = { '1':'陰盤', '2':'時家(置閏)', '6':'日家', '4':'月家', '5':'年家' };
+
+      return (
+        <div className="min-h-screen bg-gray-50 text-gray-800 font-sans pb-20">
+          <div className="max-w-4xl mx-auto p-4 md:p-8 bg-white shadow-sm min-h-screen">
+            <div className="mb-6 border-b border-gray-200 pb-4">
+              <div className="text-sm text-gray-500 mb-2">奇門遁甲 {'>'} 排盤</div>
+              <h1 className="text-2xl md:text-3xl font-bold flex items-center gap-2">
+                奇門遁甲
+                <span className="text-xs font-normal bg-orange-100 text-orange-700 px-2 py-1 rounded-full">自動標註四害</span>
+              </h1>
+            </div>
+
+            <div className="space-y-6">
+              <section>
+                <h2 className="text-lg font-bold mb-3">設定時間</h2>
+                <div className="flex flex-wrap gap-3">
+                  <select className="border border-gray-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-200 focus:outline-none w-full sm:w-auto" value={year} onChange={e => setYear(e.target.value)}>
+                    {years.map(y => <option key={y} value={y}>{y}年</option>)}
+                  </select>
+                  <select className="border border-gray-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-200 focus:outline-none w-full sm:w-auto" value={month} onChange={e => setMonth(e.target.value)}>
+                    {months.map(m => <option key={m} value={m}>{m}月</option>)}
+                  </select>
+                  <select className="border border-gray-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-200 focus:outline-none w-full sm:w-auto" value={day} onChange={e => setDay(e.target.value)}>
+                    {days.map(d => <option key={d} value={d}>{d}日</option>)}
+                  </select>
+                  <select className="border border-gray-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-200 focus:outline-none w-full sm:w-auto" value={hour} onChange={e => setHour(e.target.value)}>
+                    {hours.map(h => <option key={h} value={h}>{h}時</option>)}
+                  </select>
+                  <select className="border border-gray-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-200 focus:outline-none w-full sm:w-auto" value={minute} onChange={e => setMinute(e.target.value)}>
+                    {minutes.map(m => <option key={m} value={m}>{m}分</option>)}
+                  </select>
+                  <button onClick={handleSetCurrentTime} className="border border-cyan-500 text-cyan-600 rounded px-4 py-2 hover:bg-cyan-50 transition-colors w-full sm:w-auto">
+                    現在時間
+                  </button>
+                </div>
+              </section>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <section>
+                  <h2 className="text-lg font-bold mb-3">排盤系統</h2>
+                  <select className="w-full border border-gray-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-200 focus:outline-none" value={system} onChange={e => setSystem(e.target.value)}>
+                    <option value="1">陰盤</option>
+                    <option value="2">時家(置閏)</option>
+                    <option value="6">日家</option>
+                    <option value="4">月家</option>
+                    <option value="5">年家</option>
+                  </select>
+                </section>
+                <section>
+                  <h2 className="text-lg font-bold mb-3">局數設定 (強制指定)</h2>
+                  <select className="w-full border border-gray-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-200 focus:outline-none" value={juSetting} onChange={e => setJuSetting(e.target.value)}>
+                    {juOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                  </select>
+                </section>
+              </div>
+
+              <div className="text-center pt-4">
+                <button onClick={handleStartCalculate} className="bg-[#E65C30] hover:bg-[#D44A1E] text-white px-8 py-2.5 rounded text-lg transition-colors shadow-sm font-medium">
+                  開始排盤
+                </button>
+              </div>
+            </div>
+
+            {showResult && calcData && (
+              <div className="mt-12 pt-8 border-t border-gray-200 fade-in flex flex-col items-center">
+                <div className="font-serif text-[17px] leading-relaxed mb-6 tracking-wide w-full max-w-lg">
+                  <div className="flex flex-wrap mb-1">西元：{year} 年 {month} 月 {day} 日 {hour} 時 {minute} 分</div>
+                  <div className="flex flex-wrap mb-2">農曆：{calcData.lunar} {calcData.displayHStr} 時</div>
+
+                  <div className="grid grid-cols-4 gap-x-2 w-full md:w-3/4 my-2">
+                    <div className="col-span-4 grid grid-cols-4">
+                      <div>天干：{calcData.bazi.y[0]}</div><div>{calcData.bazi.m[0]}</div><div>{calcData.bazi.d[0]}</div><div>{calcData.bazi.h[0]}</div>
+                    </div>
+                    <div className="col-span-4 grid grid-cols-4 mt-1">
+                      <div>地支：{calcData.bazi.y[1]}</div><div>{calcData.bazi.m[1]}</div><div>{calcData.bazi.d[1]}</div><div>{calcData.bazi.h[1]}</div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-row justify-between mt-4 relative w-full">
+                    <div>
+                      起局：{calcData.juText} 局<br />
+                      旬首：{calcData.xunText} 旬<br />
+                      符頭：{calcData.fuText}<br />
+                      值符：{calcData.zhiFu}
+                    </div>
+                    <div className="mr-8">
+                      排盤：{systemNameMap[system]}<br />
+                      空亡：{calcData.emptyText}<br />
+                      驛馬：{calcData.horseText}<br />
+                      值使：{calcData.zhiShi}<br />
+                      {calcData.isWuBuYuShi && <span className="text-red-600 font-bold bg-red-100 px-1 rounded">⚠️ 五不遇時</span>}
+                    </div>
+
+                    <div className="absolute right-0 bottom-0 text-red-600 font-bold text-xl tracking-widest flex flex-col items-end">
+                      {((calcData.doorOffset + 8) % 8) === 4 && <span>門反</span>}
+                      {calcData.doorOffset === 0 && <span>門伏</span>}
+                      {((calcData.starOffset + 8) % 8) === 4 && <span>星反</span>}
+                      {calcData.starOffset === 0 && <span>星伏</span>}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="relative w-full max-w-[500px] font-serif select-none mt-12 mb-8">
+                  <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 text-xl font-bold">{calcData.outerStems[9]}</div>
+                  <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 text-xl font-bold">{calcData.outerStems[1]}</div>
+                  <div className="absolute top-[16%] -left-8 text-xl font-bold">{calcData.outerStems[4]}</div>
+                  <div className="absolute top-[50%] -left-8 transform -translate-y-1/2 text-xl font-bold">{calcData.outerStems[3]}</div>
+                  <div className="absolute top-[83%] -left-8 text-xl font-bold">{calcData.outerStems[8]}</div>
+
+                  <div className="absolute top-[16%] -right-8 text-xl font-bold">{calcData.outerStems[2]}</div>
+                  <div className="absolute top-[50%] -right-8 transform -translate-y-1/2 text-xl font-bold">{calcData.outerStems[7]}</div>
+                  <div className="absolute top-[83%] -right-8 text-xl font-bold">{calcData.outerStems[6]}</div>
+
+                  <div className="grid grid-cols-3 border-2 border-black bg-white z-10 relative">
+                    {[4, 9, 2, 3, 5, 7, 8, 1, 6].map((p, index) => {
+                      if (p === 5) return <div key={index} className="border border-black aspect-square p-2"></div>;
+
+                      const isHorse = calcData.horsePalace === p;
+                      const isEmpty = calcData.emptyPalaces.includes(p);
+                      const { stemArr: earthStems } = getCombinedStem(calcData.earthPan, p);
+
+                      let heavenStems = [];
+                      if (calcData.heavenPan[p] && calcData.heavenPan[p].stem !== null) {
+                        heavenStems.push(GANS[calcData.heavenPan[p].stem]);
+                        if (calcData.heavenPan[p].star === 2 && calcData.earthPan[5] !== null) {
+                          heavenStems.push(GANS[calcData.earthPan[5]]);
+                        }
+                      }
+
+                      const doorName = DOORS[calcData.doorPan[p]];
+                      const isDoorPo = checkPo(doorName, p);
+
+                      return (
+                        <div key={index} className="border border-black aspect-square p-2 relative flex flex-col justify-between overflow-hidden bg-white">
+                          <div className="flex justify-between items-start text-[16px]">
+                            <div className="flex items-center space-x-1">
+                              <span className="font-bold">{PALACES[p][0]}</span>
+                              <span className="text-[10px] text-gray-600 self-end mb-[2px]">{PALACES[p][1]}</span>
+                              <span className="ml-1">{calcData.deityPan[p]}</span>
+                            </div>
+                            <div className="flex flex-col items-center leading-none text-sm space-y-1">
+                              {isEmpty && <span className="font-bold text-red-600 tracking-widest">空</span>}
+                              {isHorse && <span className="font-bold text-green-600 tracking-widest">馬</span>}
+                            </div>
+                          </div>
+
+                          <div className="flex justify-center items-center relative text-[22px] my-1">
+                            <span>{STARS[calcData.heavenPan[p]?.star]}</span>
+                            <div className="absolute right-1 flex flex-col items-center leading-[1.1]">
+                              <div className="flex flex-row">
+                                {heavenStems.map((s, i) => <span key={i} className={`font-bold ${checkXing(s, p) ? 'text-red-600' : ''}`}>{s}</span>)}
+                              </div>
+                              <div className="flex space-x-1 text-[11px] mt-[2px]">
+                                {heavenStems.map((s, i) => (
+                                  checkXing(s, p) ? <span key={'hx'+i} className="text-red-600 font-normal">刑</span> :
+                                  checkMu(s, p) ? <span key={'hm'+i} className="text-gray-400 font-normal">墓</span> :
+                                  <span key={'he'+i} className="opacity-0">無</span>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex justify-center items-end relative text-[22px] mt-auto">
+                            <div className="flex flex-col items-center leading-none">
+                              <span className={isDoorPo ? 'text-red-600 font-bold' : ''}>{doorName}</span>
+                              {isDoorPo && (
+                                <span className="text-[11px] text-gray-400 mt-[2px] font-normal tracking-widest">迫</span>
+                              )}
+                            </div>
+                            <div className="absolute right-1 bottom-0 flex flex-col items-center leading-[1.1]">
+                              <div className="flex flex-row">
+                                {earthStems.map((s, i) => <span key={i} className={`font-bold ${checkXing(s, p) ? 'text-red-600' : ''}`}>{s}</span>)}
+                              </div>
+                              <div className="flex space-x-1 text-[11px] mt-[2px]">
+                                {earthStems.map((s, i) => (
+                                  checkXing(s, p) ? <span key={'ex'+i} className="text-red-600 font-normal">刑</span> :
+                                  checkMu(s, p) ? <span key={'em'+i} className="text-gray-400 font-normal">墓</span> :
+                                  <span key={'ee'+i} className="opacity-0">無</span>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="absolute inset-0 pointer-events-none opacity-[0.02] flex items-center justify-center z-0">
+                            <div className="w-[120%] h-[120%] bg-[url('https://www.transparenttextures.com/patterns/stardust.png')]"></div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap justify-center gap-3 w-full max-w-lg mt-4 mb-10">
+                  <button onClick={() => quickChangeDate('day', -1)} className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded shadow-sm border border-gray-300 transition-colors text-sm">
+                    上一日
+                  </button>
+                  <button onClick={() => quickChangeDate('day', 1)} className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded shadow-sm border border-gray-300 transition-colors text-sm">
+                    下一日
+                  </button>
+                  <button onClick={() => quickChangeDate('hour', -2)} className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded shadow-sm border border-gray-300 transition-colors text-sm">
+                    上一時
+                  </button>
+                  <button onClick={() => quickChangeDate('hour', 2)} className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded shadow-sm border border-gray-300 transition-colors text-sm">
+                    下一時
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<QiMenDunJiaApp />);
+  </script>
+</body>
+</html>
